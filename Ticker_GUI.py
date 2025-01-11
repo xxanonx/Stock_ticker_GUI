@@ -11,10 +11,43 @@ import datetime
 # not done yet
 class IndicatorSet:
     def __init__(self, indicator : tuple, interval : int, span : int, specific_symbol=None):
-        self.indicator = indicator
+        new_indicator_tuple = []
+        for i in indicator:
+            if isinstance(i, str):
+                if i.isdigit():
+                    new_indicator_tuple.append(int(i))
+                else:
+                    new_indicator_tuple.append(i)
+            else:
+                new_indicator_tuple.append(i)
+        self.indicator = tuple(new_indicator_tuple)
         self.interval = interval
         self.span = span
         self.specific_symbol = specific_symbol
+
+    def __str__(self):
+        string_to_return = ""
+        for n, aspect in enumerate(self.indicator):
+            if n == 1:
+                string_to_return += "("
+            string_to_return += str(aspect)
+            if n >= 1:
+                string_to_return += ", "
+        string_to_return = string_to_return[:-2]
+        string_to_return += ")"
+        return string_to_return
+
+    def name(self):
+        return self.__str__()
+
+    def make_indicator(self, close_list: pd.DataFrame):
+        # indicator_options = ["Moving Average", "MACD", "RSI"]
+        if self.indicator[0] == "Moving Average":
+            return make_moving_ave(close_list.astype(float).tolist(), self.indicator[1], not self.indicator[2])
+        elif self.indicator[0] == "MACD":
+            return make_macd(close_list.astype(float).tolist(), self.indicator[1], self.indicator[2], self.indicator[3])
+        elif self.indicator[0] == "RSI":
+            return calculate_rsi(close_list.astype(float), self.indicator[1])
 
 
 def _log(sender, app_data, user_data):
@@ -41,30 +74,29 @@ def add_or_delete_to_saved_symbol(new_symbol=None, add=None):
     dpg.configure_item("new_symbol", default_value="")
 
 
-# works. takes pickle in folder and brings the data to a list named saved_symbols
-def retrieve_symbols():
-    with open('symbols.pickle', 'rb') as file:
-        symbols = pickle.load(file)
+# works. takes pickle in local folder and returns the data
+def retrieve_local_pickle(filename):
+    with open((filename + '.pickle'), 'rb') as file:
+        data = pickle.load(file)
+    return data
 
-    return symbols
+# pickle brothers right here
+saved_symbols = retrieve_local_pickle("symbols")
+set_of_indicators = retrieve_local_pickle("indicators")
+short_list_of_indicators = [cat.name() for cat in set_of_indicators]
 
 
-saved_symbols = retrieve_symbols()
 interval_options = ["5minute", "10minute", "hour", "day", "week"]
 span_options = ["day", "week", "month", "3month", "year", "5year"]
 bounds_options = ["extended", "trading", "regular"]
-
 indicator_options = ["Moving Average", "MACD", "RSI"]
 
 amount_of_times_window_opened = 0
 
-set_of_indicators = []
-"""with open('indicators.pickle', 'rb') as file:
-    set_of_indicators = pickle.load(file)"""
 
-# Not tested yet. saving an indicator.
+# works. saving an indicator.
 def create_new_indicator(indicator, interval, span, specific_symbol=None, symbol_if_needed=None):
-    global set_of_indicators
+    global set_of_indicators, short_list_of_indicators
     if specific_symbol:
         specific_symbol = symbol_if_needed
     else:
@@ -72,6 +104,26 @@ def create_new_indicator(indicator, interval, span, specific_symbol=None, symbol
     set_of_indicators.append(IndicatorSet(indicator, interval, span, specific_symbol))
     with open('indicators.pickle', 'wb') as file:
         pickle.dump(set_of_indicators, file)
+    short_list_of_indicators = [cat.name() for cat in set_of_indicators]
+    dpg.configure_item("ind_2_del", items=short_list_of_indicators)
+
+# works. deletes an indicator
+def delete_indicator(name):
+    global set_of_indicators, short_list_of_indicators
+    index_to_delete = None
+    print(name)
+    for n, short in enumerate(short_list_of_indicators):
+        if name == short:
+            index_to_delete = n
+            print(index_to_delete)
+            break
+    if index_to_delete is not None:
+        print(set_of_indicators)
+        set_of_indicators.pop(index_to_delete)
+        with open('indicators.pickle', 'wb') as file:
+            pickle.dump(set_of_indicators, file)
+        short_list_of_indicators = [cat.name() for cat in set_of_indicators]
+        dpg.configure_item("ind_2_del", items=short_list_of_indicators)
 
 
 # Robinhood login. uses dotenv to store sensitive data on an .env file. it's local but should not be on github.
@@ -110,9 +162,11 @@ def login_rh(auth=None):
 
 
 # not sure if this function is needed. Has been very buggy. needs revamping
+# been revamped. works. would be better if the popup closed after a successful adding of the indicator
 def display_popup_per_indicator(indicator, parent):
     win_tag = f"win_add_{indicator[:3]}"
     print(win_tag)
+
     with dpg.popup(parent, modal=True, mousebutton=dpg.mvMouseButton_Left, tag=win_tag):
         dpg.add_text(indicator)
         dpg.add_text(f"Making this indicator to only work with the interval " +
@@ -159,15 +213,15 @@ def display_popup_per_indicator(indicator, parent):
                              callback=lambda: dpg.configure_item(f"specific_symbol{indicator[:3]}", show=True))
             dpg.add_combo(saved_symbols, label="Which symbol?", callback=_log, tag=f"specific_symbol{indicator[:3]}",
                           fit_width=True, show=False)
-    # dpg.configure_item(win_tag,show=True)
+    dpg.configure_item(win_tag,show=True)
 
 # use robinhood to get historical data to display on graph
 def get_historical_rh(symbol, interval='day', span='year', bounds="regular"):
     global amount_of_times_window_opened
     hist = r.get_stock_historicals(symbol, interval, span, bounds)
     hist = pd.DataFrame(hist)
-    print(hist)
-    print(type(hist))
+    """print(hist)
+    print(type(hist))"""
     stock_name = r.get_name_by_symbol(symbol)
     timestamp = []
     for begin in hist["begins_at"].tolist():
@@ -175,7 +229,7 @@ def get_historical_rh(symbol, interval='day', span='year', bounds="regular"):
 
     window_instance = amount_of_times_window_opened
     hist_window_tag = f"{symbol}{window_instance}"
-    with dpg.window(label=stock_name, width=1000, height=400, pos=(300, 0),
+    with dpg.window(label=stock_name, width=1000, height=400, pos=(320, 0),
                     tag= hist_window_tag, on_close=lambda: dpg.delete_item(hist_window_tag)):
         amount_of_times_window_opened += 1
 
@@ -187,13 +241,16 @@ def get_historical_rh(symbol, interval='day', span='year', bounds="regular"):
                 dpg.add_candle_series(timestamp, hist["open_price"].astype(float).tolist(),
                                       hist["close_price"].astype(float).tolist(), hist["low_price"].astype(float).tolist(),
                                       hist["high_price"].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)
+                for indicator in set_of_indicators:
+                    indicator_Y = indicator.make_indicator(hist["close_price"])
+                    dpg.add_line_series(timestamp, indicator_Y, label=indicator.name())
                 dpg.fit_axis_data(dpg.top_container_stack())
             dpg.fit_axis_data(xaxis)
 
 
 # start of functions for indicators
 # made these functions a while ago before chatGpt and while I was very new to programming.
-# Except the RSI. I think you have to pass it a pandas df to it if I remember right
+# Except the RSI. I think you have to pass it a pandas DF if I remember right
 def make_moving_ave(close_list, period=20, simple=True):
     sma = []
     start = period - 1  # was 0
@@ -234,7 +291,7 @@ def make_moving_ave(close_list, period=20, simple=True):
             return ema
 
 
-def make_macd(close_list, ema1=12, ema2=26, ema_sig=9):
+def make_macd(close_list: pd.DataFrame, ema1=12, ema2=26, ema_sig=9):
     ema12 = make_moving_ave(close_list, ema1, simple=False)
     ema26 = make_moving_ave(close_list, ema2, simple=False)
 
@@ -278,7 +335,7 @@ def show_ticker_gui():
     dpg.set_global_font_scale(1 / FONT_SCALE)
     dpg.bind_font(font_medium)
 
-    with dpg.window(label='Robinhood Ticker GUI', width=300, height=300):
+    with dpg.window(label='Robinhood Ticker GUI', width=320, height=320):
         with dpg.group(horizontal=True):
             dpg.add_text("X", color=(255,0,0), tag="login_status")
             dpg.bind_item_font(dpg.last_item(), font_bold)
@@ -305,11 +362,12 @@ def show_ticker_gui():
                           tag="selected_span", fit_width=True)
             dpg.add_combo(bounds_options, label="Bounds", default_value=bounds_options[2], callback=_log,
                           tag="selected_bounds", fit_width=True)
+            dpg.add_spacer(height=5)
             dpg.add_button(label="View", callback=lambda: get_historical_rh(symbol=dpg.get_value("selected_symbol"),
                                                                             interval=dpg.get_value("selected_interval"),
                                                                             span=dpg.get_value("selected_span"),
                                                                             bounds=dpg.get_value("selected_bounds")))
-            dpg.add_spacer(width=40)
+            dpg.add_spacer(height=10)
             # Add or delete symbols from symbol list
             dpg.add_button(label="Add/Delete Symbol", callback=_log)
             with dpg.popup(dpg.last_item(), modal=True, mousebutton=dpg.mvMouseButton_Left, tag="win_change_syms"):
@@ -321,19 +379,25 @@ def show_ticker_gui():
                                    callback=lambda: add_or_delete_to_saved_symbol(dpg.get_value("new_symbol"), False))
 
             # Indicator management
-            dpg.add_spacer(width=40)
-            dpg.add_button(label="Indicator Management", callback=_log)
-            with dpg.popup(dpg.last_item(), modal=True, mousebutton=dpg.mvMouseButton_Left, tag="win_manage_ind"):
-                with dpg.group(horizontal=True):
-                    add_but_tag0 = f"add_{indicator_options[0][:3]}_but"
-                    dpg.add_button(label=f"Add {indicator_options[0]}", tag=add_but_tag0,
-                                   callback=lambda: display_popup_per_indicator(indicator_options[0], add_but_tag0))
-                    add_but_tag1 = f"add_{indicator_options[1][:3]}_but"
-                    dpg.add_button(label=f"Add {indicator_options[1]}", tag=add_but_tag1,
-                                   callback=lambda: display_popup_per_indicator(indicator_options[1], add_but_tag1))
-                    add_but_tag2 = f"add_{indicator_options[2][:3]}_but"
-                    dpg.add_button(label=f"Add {indicator_options[2]}", tag=add_but_tag2,
-                                   callback=lambda: display_popup_per_indicator(indicator_options[2], add_but_tag2))
+            dpg.add_spacer(height=10)
+            dpg.add_button(label="Indicator Management", callback=lambda: dpg.configure_item("win_manage_ind", show=True))
+            # with dpg.popup(dpg.last_item(), modal=True, mousebutton=dpg.mvMouseButton_Left, tag="win_manage_ind"):
+    with dpg.window(label="Indicator Management", width=320, height=130, pos=(0, 320), tag="win_manage_ind",):
+        with dpg.group(horizontal=True):
+            add_but_tag0 = f"add_{indicator_options[0][:3]}_but"
+            dpg.add_button(label=f"Add {indicator_options[0]}", tag=add_but_tag0,
+                           callback=lambda: display_popup_per_indicator(indicator_options[0], add_but_tag0))
+            add_but_tag1 = f"add_{indicator_options[1][:3]}_but"
+            dpg.add_button(label=f"Add {indicator_options[1]}", tag=add_but_tag1,
+                           callback=lambda: display_popup_per_indicator(indicator_options[1], add_but_tag1))
+            add_but_tag2 = f"add_{indicator_options[2][:3]}_but"
+            dpg.add_button(label=f"Add {indicator_options[2]}", tag=add_but_tag2,
+                           callback=lambda: display_popup_per_indicator(indicator_options[2], add_but_tag2))
+        dpg.add_spacer(height=10)
+        dpg.add_combo(short_list_of_indicators, label="Indicator to delete",
+                      callback=_log, tag="ind_2_del", fit_width=True)
+        dpg.add_button(label="Delete", tag="del_ind",
+                       callback=lambda: delete_indicator(dpg.get_value("ind_2_del")))
 
 
 
