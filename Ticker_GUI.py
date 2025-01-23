@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import dearpygui.dearpygui as dpg
 import robin_stocks.robinhood as r
+import yfinance as yf
 from dotenv import load_dotenv
 import os
 import pickle
@@ -86,12 +87,18 @@ set_of_indicators = retrieve_local_pickle("indicators")
 short_list_of_indicators = [cat.name() for cat in set_of_indicators]
 
 
-interval_options = ["5minute", "10minute", "hour", "day", "week"]
-span_options = ["day", "week", "month", "3month", "year", "5year"]
-bounds_options = ["extended", "trading", "regular"]
+"""interval_options = ["5minute", "10minute", "hour", "day", "week"]
+span_options = ["day", "week", "month", "3month", "year", "5year"]          # old for Robinhood
+bounds_options = ["extended", "trading", "regular"]"""
+
+span_options = ["1d","5d","1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"]
+interval_options = ["1m","2m","5m","15m","30m","60m","90m","1h","1d","5d","1wk","1mo","3mo"]
+
 indicator_options = ["Moving Average", "MACD", "RSI"]
 
 amount_of_times_window_opened = 0
+logged_in_rh = False
+DEBUG_prog = False
 
 
 # works. saving an indicator.
@@ -106,6 +113,7 @@ def create_new_indicator(indicator, interval, span, specific_symbol=None, symbol
         pickle.dump(set_of_indicators, file)
     short_list_of_indicators = [cat.name() for cat in set_of_indicators]
     dpg.configure_item("ind_2_del", items=short_list_of_indicators)
+
 
 # works. deletes an indicator
 def delete_indicator(name):
@@ -129,34 +137,38 @@ def delete_indicator(name):
 # Robinhood login. uses dotenv to store sensitive data on an .env file. it's local but should not be on github.
 # the auth code is provided using an authenticator app that refreshes every 30 seconds to a minute
 def login_rh(auth=None):
+    global logged_in_rh
     login_valid = False
-    tries = 3
+    # tries = 3
     print(auth)
-    while not login_valid:
-        try:
-            load_dotenv()
-            if auth is None:
-                two_factor_authenticator = input("What is the current authenticator?")
-            else:
-                two_factor_authenticator = auth
+    # while not login_valid:
+    try:
+        load_dotenv()
+        if auth is None:
+            two_factor_authenticator = input("What is the current authenticator?")
+        else:
+            two_factor_authenticator = auth
 
-            login_valid = r.login(os.environ['robin_username'],
-                                  os.environ['robin_password'],
-                                  mfa_code=two_factor_authenticator,
-                                  store_session=False)
-        except KeyError as e:
-            print("that seems to be an incorrect authenticator. Try again...")
-            tries -= 1
-            if tries <= 0:
-                print("you have 0 tries left to login. Please check login code.")
-                print(e)
-                break
+        login_valid = r.authentication.login(os.environ['robin_username'],
+                                             os.environ['robin_password'])
+                                             # mfa_code=two_factor_authenticator)
+        """store_session=True, pickle_path="_invest_newb"""
+
+    except KeyError as e:
+        print("that seems to be an incorrect authenticator. Try again...")
+        """tries -= 1
+        if tries <= 0:
+        print("you have 0 tries left to login. Please check login code.")"""
+        print(e)
+            # break
+    print(login_valid)
     if login_valid:
         if auth is not None:
             dpg.configure_item("win_login_rh", show=False)
             dpg.configure_item("login_status", default_value="OK")
             dpg.configure_item("login_status", color=(0,255,0))
         print("login successful")
+        logged_in_rh = True
 
     return login_valid
 
@@ -215,34 +227,56 @@ def display_popup_per_indicator(indicator, parent):
                           fit_width=True, show=False)
     dpg.configure_item(win_tag,show=True)
 
+
 # use robinhood to get historical data to display on graph
-def get_historical_rh(symbol, interval='day', span='year', bounds="regular"):
-    global amount_of_times_window_opened
-    hist = r.get_stock_historicals(symbol, interval, span, bounds)
-    hist = pd.DataFrame(hist)
-    """print(hist)
-    print(type(hist))"""
+def get_historical_rh(symbol, interval='day', span='year'):             # bounds="regular"
+    global amount_of_times_window_opened, logged_in_rh
+    if logged_in_rh:
+        hist = r.get_stock_historicals(symbol, interval, span)
+        hist = pd.DataFrame(hist)# bounds
+        if DEBUG_prog:
+            with open('Debug/debug_historical.pickle', 'wb') as file:
+                pickle.dump(hist, file)
+    else:
+        if not DEBUG_prog:
+            hist = yf.download(symbol, period=span, interval=interval)
+        # retrieve_local_pickle("Debug/debug_historical")
+
+
+    print(hist)
+    # print(type(hist))
     stock_name = r.get_name_by_symbol(symbol)
     timestamp = []
-    for begin in hist["begins_at"].tolist():
-        timestamp.append(datetime.datetime.fromisoformat(begin).timestamp())
+    set_tick_timestamp = []
+
+    for n, begin in enumerate(hist["Close"].index.tolist()):          # for robinhood: hist["begins_at"].tolist()
+        # datetime_format = datetime.datetime.fromisoformat(begin).timestamp()
+        datetime_format = datetime.datetime.fromisoformat(str(begin)).strftime("%m/%d/%y")
+        set_tick_timestamp.append((datetime_format, n))
+        timestamp.append(n)
+    set_tick_timestamp = tuple(set_tick_timestamp)
 
     window_instance = amount_of_times_window_opened
     hist_window_tag = f"{symbol}{window_instance}"
-    with dpg.window(label=stock_name, width=1000, height=400, pos=(320, 0),
+    with dpg.window(label=stock_name, width=1500, height=800, pos=(320, 0),
                     tag= hist_window_tag, on_close=lambda: dpg.delete_item(hist_window_tag)):
         amount_of_times_window_opened += 1
 
         # need to add the ability to also view pre-selected indicators as well
-        with dpg.plot(label="Candle Series", height=400, width=-1):
+        with dpg.plot(label="Candle Series", height=-1, width=-1):
             dpg.add_plot_legend()
-            xaxis = dpg.add_plot_axis(dpg.mvXAxis, label=interval, scale=dpg.mvPlotScale_Time)
+            xaxis = dpg.add_plot_axis(dpg.mvXAxis, label=interval)     # scale=dpg.mvPlotScale_Time
+            print(xaxis)
+            print(type(xaxis))
+            print(set_tick_timestamp)
+            print(type(set_tick_timestamp))
+            dpg.set_axis_ticks(dpg.last_item(), set_tick_timestamp)
             with dpg.plot_axis(dpg.mvYAxis, label="USD"):
-                dpg.add_candle_series(timestamp, hist["open_price"].astype(float).tolist(),
-                                      hist["close_price"].astype(float).tolist(), hist["low_price"].astype(float).tolist(),
-                                      hist["high_price"].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)
+                dpg.add_candle_series(timestamp, hist["Open"][symbol].astype(float).tolist(),
+                                      hist["Close"][symbol].astype(float).tolist(), hist["Low"][symbol].astype(float).tolist(),
+                                      hist["High"][symbol].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)    # time_unit=dpg.mvTimeUnit_Day
                 for indicator in set_of_indicators:
-                    indicator_Y = indicator.make_indicator(hist["close_price"])
+                    indicator_Y = indicator.make_indicator(hist["Close"][symbol])
                     dpg.add_line_series(timestamp, indicator_Y, label=indicator.name())
                 dpg.fit_axis_data(dpg.top_container_stack())
             dpg.fit_axis_data(xaxis)
@@ -341,6 +375,7 @@ def show_ticker_gui():
             dpg.bind_item_font(dpg.last_item(), font_bold)
             dpg.add_button(label="Login to Robinhood")
             dpg.bind_item_font(dpg.last_item(), font_bold)
+            # popup for logging in
             with dpg.popup(dpg.last_item(), modal=True, mousebutton=dpg.mvMouseButton_Left, tag="win_login_rh"):
                 dpg.add_text("Use an authenticator app to retrieve a Two Factor Authenticator code")
                 dpg.add_input_text(label="Authenticator", hint="enter text here", callback=_log, tag="MFA_input",
@@ -360,13 +395,12 @@ def show_ticker_gui():
                           tag="selected_interval", fit_width=True)
             dpg.add_combo(span_options, label="Span", default_value=span_options[4], callback=_log,
                           tag="selected_span", fit_width=True)
-            dpg.add_combo(bounds_options, label="Bounds", default_value=bounds_options[2], callback=_log,
-                          tag="selected_bounds", fit_width=True)
+            """dpg.add_combo(bounds_options, label="Bounds", default_value=bounds_options[2], callback=_log,
+                          tag="selected_bounds", fit_width=True)"""
             dpg.add_spacer(height=5)
             dpg.add_button(label="View", callback=lambda: get_historical_rh(symbol=dpg.get_value("selected_symbol"),
                                                                             interval=dpg.get_value("selected_interval"),
-                                                                            span=dpg.get_value("selected_span"),
-                                                                            bounds=dpg.get_value("selected_bounds")))
+                                                                            span=dpg.get_value("selected_span")))           # bounds=dpg.get_value("selected_bounds")
             dpg.add_spacer(height=10)
             # Add or delete symbols from symbol list
             dpg.add_button(label="Add/Delete Symbol", callback=_log)
@@ -404,7 +438,7 @@ def show_ticker_gui():
 dpg.create_context()
 dpg.set_global_font_scale(1.25)
 show_ticker_gui()
-dpg.create_viewport(title='Ticker GUI', width=1200, height=1000)
+dpg.create_viewport(title='Ticker GUI', width=2000, height=1500)
 dpg.setup_dearpygui()
 dpg.show_viewport()
 dpg.start_dearpygui()
