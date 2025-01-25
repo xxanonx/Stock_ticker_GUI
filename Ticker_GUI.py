@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import os
 import pickle
 import datetime
+from finta import TA
 # import time
 
 # not done yet
@@ -43,12 +44,21 @@ class IndicatorSet:
 
     def make_indicator(self, close_list: pd.DataFrame):
         # indicator_options = ["Moving Average", "MACD", "RSI"]
-        if self.indicator[0] == "Moving Average":
+        """if self.indicator[0] == "Moving Average":
             return make_moving_ave(close_list.astype(float).tolist(), self.indicator[1], not self.indicator[2])
         elif self.indicator[0] == "MACD":
             return make_macd(close_list.astype(float).tolist(), self.indicator[1], self.indicator[2], self.indicator[3])
         elif self.indicator[0] == "RSI":
-            return calculate_rsi(close_list.astype(float), self.indicator[1])
+            return calculate_rsi(close_list.astype(float), self.indicator[1])"""
+        if self.indicator[0] == "Moving Average":
+            if not self.indicator[2]:
+                return TA.SMA(close_list.astype(float), self.indicator[1])                # close_list.astype(float).tolist(), self.indicator[1], not self.indicator[2])
+            else:
+                return TA.EMA(close_list.astype(float), self.indicator[1])
+        elif self.indicator[0] == "MACD":
+            return TA.MACD(close_list.astype(float), self.indicator[1], self.indicator[2], self.indicator[3])
+        elif self.indicator[0] == "RSI":
+            return TA.RSI(close_list.astype(float), self.indicator[1])
 
 
 def _log(sender, app_data, user_data):
@@ -238,8 +248,10 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
             with open('Debug/debug_historical.pickle', 'wb') as file:
                 pickle.dump(hist, file)
     else:
-        if not DEBUG_prog:
-            hist = yf.download(symbol, period=span, interval=interval)
+        hist = yf.download(symbol, period=span, interval=interval)
+        if DEBUG_prog:
+            with open(f'Debug/debug_{symbol}_historical.pickle', 'wb') as file:
+                pickle.dump(hist, file)
         # retrieve_local_pickle("Debug/debug_historical")
 
 
@@ -266,17 +278,17 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
         with dpg.plot(label="Candle Series", height=-1, width=-1):
             dpg.add_plot_legend()
             xaxis = dpg.add_plot_axis(dpg.mvXAxis, label=interval)     # scale=dpg.mvPlotScale_Time
-            print(xaxis)
+            """print(xaxis)
             print(type(xaxis))
             print(set_tick_timestamp)
-            print(type(set_tick_timestamp))
+            print(type(set_tick_timestamp))"""
             dpg.set_axis_ticks(dpg.last_item(), set_tick_timestamp)
             with dpg.plot_axis(dpg.mvYAxis, label="USD"):
                 dpg.add_candle_series(timestamp, hist["Open"][symbol].astype(float).tolist(),
                                       hist["Close"][symbol].astype(float).tolist(), hist["Low"][symbol].astype(float).tolist(),
                                       hist["High"][symbol].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)    # time_unit=dpg.mvTimeUnit_Day
                 for indicator in set_of_indicators:
-                    indicator_Y = indicator.make_indicator(hist["Close"][symbol])
+                    indicator_Y = indicator.make_indicator(hist)    # ["Close"][symbol]
                     dpg.add_line_series(timestamp, indicator_Y, label=indicator.name())
                 dpg.fit_axis_data(dpg.top_container_stack())
             dpg.fit_axis_data(xaxis)
