@@ -108,7 +108,7 @@ indicator_options = ["Moving Average", "MACD", "RSI"]
 
 amount_of_times_window_opened = 0
 logged_in_rh = False
-DEBUG_prog = False
+DEBUG_prog = True
 
 
 # works. saving an indicator.
@@ -250,8 +250,12 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
     else:
         hist = yf.download(symbol, period=span, interval=interval)
         if DEBUG_prog:
-            with open(f'Debug/debug_{symbol}_historical.pickle', 'wb') as file:
-                pickle.dump(hist, file)
+            if os.name == 'posix':
+                with open(f'Debug/debug_{symbol}_{interval}_{span}_historical.pickle', 'wb') as file:
+                    pickle.dump(hist, file)
+            elif os.name == 'nt':
+                with open(f'Debug\\debug_{symbol}_{interval}_{span}_historical.pickle', 'wb') as file:
+                    pickle.dump(hist, file)
         # retrieve_local_pickle("Debug/debug_historical")
 
 
