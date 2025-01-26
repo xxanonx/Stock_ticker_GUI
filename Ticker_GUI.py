@@ -85,11 +85,28 @@ def add_or_delete_to_saved_symbol(new_symbol=None, add=None):
     dpg.configure_item("new_symbol", default_value="")
 
 
+def remake_yfinace_df(df: pd.DataFrame):
+    timestamp = []
+    for begin in df["Close"].index.tolist():
+        datetime_format = str(begin)
+        timestamp.append(datetime_format)
+
+    col = []
+    for i in df.columns:
+        col.append(i[0])
+    data = df.to_numpy()
+    df2 = pd.DataFrame(data, columns=col, index=timestamp)
+    return df2
+
+
 # works. takes pickle in local folder and returns the data
 def retrieve_local_pickle(filename):
-    with open((filename + '.pickle'), 'rb') as file:
-        data = pickle.load(file)
-    return data
+    list_dir = os.listdir()
+    for item in list_dir:
+        if "pickle" in item and filename in item:
+            with open(item, 'rb') as file:      # (filename + '.pickle')
+                data = pickle.load(file)
+            return data
 
 # pickle brothers right here
 saved_symbols = retrieve_local_pickle("symbols")
@@ -108,7 +125,7 @@ indicator_options = ["Moving Average", "MACD", "RSI"]
 
 amount_of_times_window_opened = 0
 logged_in_rh = False
-DEBUG_prog = True
+DEBUG_prog = False
 
 
 # works. saving an indicator.
@@ -241,9 +258,10 @@ def display_popup_per_indicator(indicator, parent):
 # use robinhood to get historical data to display on graph
 def get_historical_rh(symbol, interval='day', span='year'):             # bounds="regular"
     global amount_of_times_window_opened, logged_in_rh
+    hist: pd.DataFrame
     if logged_in_rh:
-        hist = r.get_stock_historicals(symbol, interval, span)
-        hist = pd.DataFrame(hist)# bounds
+        hist = r.get_stock_historicals(symbol, interval, span)      # bounds
+        hist = pd.DataFrame(hist)
         if DEBUG_prog:
             with open('Debug/debug_historical.pickle', 'wb') as file:
                 pickle.dump(hist, file)
@@ -291,13 +309,14 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
                 dpg.add_candle_series(timestamp, hist["Open"][symbol].astype(float).tolist(),
                                       hist["Close"][symbol].astype(float).tolist(), hist["Low"][symbol].astype(float).tolist(),
                                       hist["High"][symbol].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)    # time_unit=dpg.mvTimeUnit_Day
+                ind_hist = remake_yfinace_df(hist)
                 for indicator in set_of_indicators:
-                    indicator_Y = indicator.make_indicator(hist)    # ["Close"][symbol]
-                    dpg.add_line_series(timestamp, indicator_Y, label=indicator.name())
+                    indicator_Y = indicator.make_indicator(ind_hist)    # ["Close"][symbol]
+                    dpg.add_line_series(timestamp, indicator_Y.tolist(), label=indicator.name())
                 dpg.fit_axis_data(dpg.top_container_stack())
             dpg.fit_axis_data(xaxis)
 
-
+"""
 # start of functions for indicators
 # made these functions a while ago before chatGpt and while I was very new to programming.
 # Except the RSI. I think you have to pass it a pandas DF if I remember right
@@ -374,7 +393,7 @@ def calculate_rsi(close_prices, period=14):
 
     return rsi
 # end of functions for indicators
-
+"""
 # works pretty well at this moment. I like the way to login
 def show_ticker_gui():
     FONT_SCALE = 2
