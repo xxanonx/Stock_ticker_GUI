@@ -10,6 +10,10 @@ import datetime
 from finta import TA
 # import time
 
+# CONSTANTS
+ZOOM_MULTIPLIER = 0.5
+
+
 # not done yet
 class IndicatorSet:
     def __init__(self, indicator : tuple, interval : int, span : int, specific_symbol=None):
@@ -23,6 +27,7 @@ class IndicatorSet:
             else:
                 new_indicator_tuple.append(i)
         self.indicator = tuple(new_indicator_tuple)
+        self.indicatorName = self.indicator[0]
         self.interval = interval
         self.span = span
         self.specific_symbol = specific_symbol
@@ -39,7 +44,7 @@ class IndicatorSet:
         string_to_return += ")"
         return string_to_return
 
-    def name(self):
+    def long_form_name(self):
         return self.__str__()
 
     def make_indicator(self, close_list: pd.DataFrame):
@@ -63,6 +68,7 @@ class IndicatorSet:
 
 def _log(sender, app_data, user_data):
     print(f"sender: {sender}, \t app_data: {app_data}, \t user_data: {user_data}")
+
 
 # works. takes a list named saved_symbols and stores the data to a pickle in folder for later use
 def add_or_delete_to_saved_symbol(new_symbol=None, add=None):
@@ -108,10 +114,11 @@ def retrieve_local_pickle(filename):
                 data = pickle.load(file)
             return data
 
+
 # pickle brothers right here
 saved_symbols = retrieve_local_pickle("symbols")
 set_of_indicators = retrieve_local_pickle("indicators")
-short_list_of_indicators = [cat.name() for cat in set_of_indicators]
+short_list_of_indicators = [cat.long_form_name() for cat in set_of_indicators]
 
 
 """interval_options = ["5minute", "10minute", "hour", "day", "week"]
@@ -138,7 +145,7 @@ def create_new_indicator(indicator, interval, span, specific_symbol=None, symbol
     set_of_indicators.append(IndicatorSet(indicator, interval, span, specific_symbol))
     with open('indicators.pickle', 'wb') as file:
         pickle.dump(set_of_indicators, file)
-    short_list_of_indicators = [cat.name() for cat in set_of_indicators]
+    short_list_of_indicators = [cat.long_form_name() for cat in set_of_indicators]
     dpg.configure_item("ind_2_del", items=short_list_of_indicators)
 
 
@@ -157,7 +164,7 @@ def delete_indicator(name):
         set_of_indicators.pop(index_to_delete)
         with open('indicators.pickle', 'wb') as file:
             pickle.dump(set_of_indicators, file)
-        short_list_of_indicators = [cat.name() for cat in set_of_indicators]
+        short_list_of_indicators = [cat.long_form_name() for cat in set_of_indicators]
         dpg.configure_item("ind_2_del", items=short_list_of_indicators)
 
 
@@ -276,7 +283,6 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
                     pickle.dump(hist, file)
         # retrieve_local_pickle("Debug/debug_historical")
 
-
     print(hist)
     # print(type(hist))
     stock_name = r.get_name_by_symbol(symbol)
@@ -291,13 +297,13 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
     set_tick_timestamp = tuple(set_tick_timestamp)
 
     window_instance = amount_of_times_window_opened
-    hist_window_tag = f"{symbol}{window_instance}"
-    with dpg.window(label=stock_name, width=1500, height=800, pos=(320, 0),
+    hist_window_tag = f"{symbol}_{window_instance}"
+    with dpg.window(label=stock_name, width=(1500 * ZOOM_MULTIPLIER), height=(800 * ZOOM_MULTIPLIER), pos=(320, 0),
                     tag= hist_window_tag, on_close=lambda: dpg.delete_item(hist_window_tag)):
         amount_of_times_window_opened += 1
 
         # need to add the ability to also view pre-selected indicators as well
-        with dpg.plot(label="Candle Series", height=-1, width=-1):
+        with dpg.plot(label="Candle Series", height=-1, width=-1, tag=f"candle_{hist_window_tag}"):
             dpg.add_plot_legend()
             xaxis = dpg.add_plot_axis(dpg.mvXAxis, label=interval)     # scale=dpg.mvPlotScale_Time
             """print(xaxis)
@@ -311,10 +317,28 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
                                       hist["High"][symbol].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)    # time_unit=dpg.mvTimeUnit_Day
                 ind_hist = remake_yfinace_df(hist)
                 for indicator in set_of_indicators:
-                    indicator_Y = indicator.make_indicator(ind_hist)    # ["Close"][symbol]
-                    dpg.add_line_series(timestamp, indicator_Y.tolist(), label=indicator.name())
+                    if indicator.indicatorName not in ["MACD", "RSI"]:
+                        indicator_y = indicator.make_indicator(ind_hist)
+                        dpg.add_line_series(timestamp, indicator_y.tolist(), label=indicator.long_form_name())
                 dpg.fit_axis_data(dpg.top_container_stack())
             dpg.fit_axis_data(xaxis)
+        for indicator in set_of_indicators:
+            if indicator.indicatorName in ["MACD", "RSI"]:
+                dpg.configure_item(f"candle_{hist_window_tag}", height=(-250 * ZOOM_MULTIPLIER))
+                dpg.add_spacer(height=10)
+                # xaxis = dpg.add_plot_axis(dpg.mvXAxis)
+                # dpg.set_axis_ticks(dpg.last_item(), set_tick_timestamp)
+                with dpg.plot_axis(dpg.mvYAxis, label=indicator.indicatorName):
+                    with dpg.plot(label=indicator.indicatorName, height=250, width=-1):
+                        # indicator_y = indicator.make_indicator(ind_hist)
+                        if indicator.indicatorName == "RSI":
+                            rsi = TA.RSI(ind_hist)
+                            dpg.add_line_series(timestamp, rsi.tolist(), label="RSI")
+                            dpg.fit_axis_data(dpg.top_container_stack())
+                    dpg.fit_axis_data(xaxis)
+
+
+
 
 """
 # start of functions for indicators
@@ -394,6 +418,8 @@ def calculate_rsi(close_prices, period=14):
     return rsi
 # end of functions for indicators
 """
+
+
 # works pretty well at this moment. I like the way to login
 def show_ticker_gui():
     FONT_SCALE = 2
@@ -467,7 +493,6 @@ def show_ticker_gui():
                       callback=_log, tag="ind_2_del", fit_width=True)
         dpg.add_button(label="Delete", tag="del_ind",
                        callback=lambda: delete_indicator(dpg.get_value("ind_2_del")))
-
 
 
 dpg.create_context()
