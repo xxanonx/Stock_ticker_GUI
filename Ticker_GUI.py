@@ -11,7 +11,7 @@ from finta import TA
 # import time
 
 # CONSTANTS
-ZOOM_MULTIPLIER = 0.5
+ZOOM_MULTIPLIER = 1
 
 
 # not done yet
@@ -326,11 +326,13 @@ def get_historical_rh(symbol, interval='day', span='year'):             # bounds
             if indicator.indicatorName in ["MACD", "RSI"]:
                 dpg.configure_item(f"candle_{hist_window_tag}", height=(-250 * ZOOM_MULTIPLIER))
                 dpg.add_spacer(height=10)
-                # xaxis = dpg.add_plot_axis(dpg.mvXAxis)
-                # dpg.set_axis_ticks(dpg.last_item(), set_tick_timestamp)
-                with dpg.plot_axis(dpg.mvYAxis, label=indicator.indicatorName):
-                    with dpg.plot(label=indicator.indicatorName, height=250, width=-1):
-                        # indicator_y = indicator.make_indicator(ind_hist)
+                with dpg.plot(label=indicator.indicatorName, height=-1, width=-1, tag=f"RSI_{hist_window_tag}"):
+                    dpg.add_plot_legend()
+                    xaxis = dpg.add_plot_axis(dpg.mvXAxis)
+                    dpg.set_axis_ticks(dpg.last_item(), set_tick_timestamp)
+                    with dpg.plot_axis(dpg.mvYAxis, label="%"):
+                        # with dpg.plot(label=indicator.indicatorName, height=250, width=-1):
+                            # indicator_y = indicator.make_indicator(ind_hist)
                         if indicator.indicatorName == "RSI":
                             rsi = TA.RSI(ind_hist)
                             dpg.add_line_series(timestamp, rsi.tolist(), label="RSI")
@@ -498,7 +500,7 @@ def show_ticker_gui():
 dpg.create_context()
 dpg.set_global_font_scale(1.25)
 show_ticker_gui()
-dpg.create_viewport(title='Ticker GUI', width=2000, height=1500)
+dpg.create_viewport(title='Ticker GUI', width=(2000 * ZOOM_MULTIPLIER), height=(1500 * ZOOM_MULTIPLIER))
 dpg.setup_dearpygui()
 dpg.show_viewport()
 dpg.start_dearpygui()
