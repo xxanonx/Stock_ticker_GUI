@@ -2,11 +2,21 @@ import numpy as np
 import pandas as pd
 import dearpygui.dearpygui as dpg
 import robin_stocks.robinhood as r
+import yfinance as yf
 from dotenv import load_dotenv
 import os
 import pickle
 import datetime
+from finta import TA
 # import time
+
+# CONSTANTS
+ZOOM_MULTIPLIER = 1
+span_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
+interval_options = ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
+
+indicator_options = ["Moving Average", "MACD", "RSI"]
+
 
 # not done yet
 class IndicatorSet:
@@ -21,6 +31,7 @@ class IndicatorSet:
             else:
                 new_indicator_tuple.append(i)
         self.indicator = tuple(new_indicator_tuple)
+        self.indicatorName = self.indicator[0]
         self.interval = interval
         self.span = span
         self.specific_symbol = specific_symbol
@@ -37,21 +48,31 @@ class IndicatorSet:
         string_to_return += ")"
         return string_to_return
 
-    def name(self):
+    def long_form_name(self):
         return self.__str__()
 
     def make_indicator(self, close_list: pd.DataFrame):
         # indicator_options = ["Moving Average", "MACD", "RSI"]
-        if self.indicator[0] == "Moving Average":
+        """if self.indicator[0] == "Moving Average":
             return make_moving_ave(close_list.astype(float).tolist(), self.indicator[1], not self.indicator[2])
         elif self.indicator[0] == "MACD":
             return make_macd(close_list.astype(float).tolist(), self.indicator[1], self.indicator[2], self.indicator[3])
         elif self.indicator[0] == "RSI":
-            return calculate_rsi(close_list.astype(float), self.indicator[1])
+            return calculate_rsi(close_list.astype(float), self.indicator[1])"""
+        if self.indicator[0] == "Moving Average":
+            if not self.indicator[2]:
+                return TA.SMA(close_list.astype(float), self.indicator[1])                # close_list.astype(float).tolist(), self.indicator[1], not self.indicator[2])
+            else:
+                return TA.EMA(close_list.astype(float), self.indicator[1])
+        elif self.indicator[0] == "MACD":
+            return TA.MACD(close_list.astype(float), self.indicator[1], self.indicator[2], self.indicator[3])
+        elif self.indicator[0] == "RSI":
+            return TA.RSI(close_list.astype(float), self.indicator[1])
 
 
 def _log(sender, app_data, user_data):
     print(f"sender: {sender}, \t app_data: {app_data}, \t user_data: {user_data}")
+
 
 # works. takes a list named saved_symbols and stores the data to a pickle in folder for later use
 def add_or_delete_to_saved_symbol(new_symbol=None, add=None):
@@ -74,24 +95,28 @@ def add_or_delete_to_saved_symbol(new_symbol=None, add=None):
     dpg.configure_item("new_symbol", default_value="")
 
 
+def remake_yfinace_df(df: pd.DataFrame):
+    timestamp = []
+    for begin in df["Close"].index.tolist():
+        datetime_format = str(begin)
+        timestamp.append(datetime_format)
+
+    col = []
+    for i in df.columns:
+        col.append(i[0])
+    data = df.to_numpy()
+    df2 = pd.DataFrame(data, columns=col, index=timestamp)
+    return df2
+
+
 # works. takes pickle in local folder and returns the data
 def retrieve_local_pickle(filename):
-    with open((filename + '.pickle'), 'rb') as file:
-        data = pickle.load(file)
-    return data
-
-# pickle brothers right here
-saved_symbols = retrieve_local_pickle("symbols")
-set_of_indicators = retrieve_local_pickle("indicators")
-short_list_of_indicators = [cat.name() for cat in set_of_indicators]
-
-
-interval_options = ["5minute", "10minute", "hour", "day", "week"]
-span_options = ["day", "week", "month", "3month", "year", "5year"]
-bounds_options = ["extended", "trading", "regular"]
-indicator_options = ["Moving Average", "MACD", "RSI"]
-
-amount_of_times_window_opened = 0
+    list_dir = os.listdir()
+    for item in list_dir:
+        if "pickle" in item and filename in item:
+            with open(item, 'rb') as file:      # (filename + '.pickle')
+                data = pickle.load(file)
+            return data
 
 
 # works. saving an indicator.
@@ -104,8 +129,9 @@ def create_new_indicator(indicator, interval, span, specific_symbol=None, symbol
     set_of_indicators.append(IndicatorSet(indicator, interval, span, specific_symbol))
     with open('indicators.pickle', 'wb') as file:
         pickle.dump(set_of_indicators, file)
-    short_list_of_indicators = [cat.name() for cat in set_of_indicators]
+    short_list_of_indicators = [cat.long_form_name() for cat in set_of_indicators]
     dpg.configure_item("ind_2_del", items=short_list_of_indicators)
+
 
 # works. deletes an indicator
 def delete_indicator(name):
@@ -122,41 +148,45 @@ def delete_indicator(name):
         set_of_indicators.pop(index_to_delete)
         with open('indicators.pickle', 'wb') as file:
             pickle.dump(set_of_indicators, file)
-        short_list_of_indicators = [cat.name() for cat in set_of_indicators]
+        short_list_of_indicators = [cat.long_form_name() for cat in set_of_indicators]
         dpg.configure_item("ind_2_del", items=short_list_of_indicators)
 
 
 # Robinhood login. uses dotenv to store sensitive data on an .env file. it's local but should not be on github.
 # the auth code is provided using an authenticator app that refreshes every 30 seconds to a minute
 def login_rh(auth=None):
+    global logged_in_rh
     login_valid = False
-    tries = 3
+    # tries = 3
     print(auth)
-    while not login_valid:
-        try:
-            load_dotenv()
-            if auth is None:
-                two_factor_authenticator = input("What is the current authenticator?")
-            else:
-                two_factor_authenticator = auth
+    # while not login_valid:
+    try:
+        load_dotenv()
+        if auth is None:
+            two_factor_authenticator = input("What is the current authenticator?")
+        else:
+            two_factor_authenticator = auth
 
-            login_valid = r.login(os.environ['robin_username'],
-                                  os.environ['robin_password'],
-                                  mfa_code=two_factor_authenticator,
-                                  store_session=False)
-        except KeyError as e:
-            print("that seems to be an incorrect authenticator. Try again...")
-            tries -= 1
-            if tries <= 0:
-                print("you have 0 tries left to login. Please check login code.")
-                print(e)
-                break
+        login_valid = r.authentication.login(os.environ['robin_username'],
+                                             os.environ['robin_password'])
+                                             # mfa_code=two_factor_authenticator)
+        """store_session=True, pickle_path="_invest_newb"""
+
+    except KeyError as e:
+        print("that seems to be an incorrect authenticator. Try again...")
+        """tries -= 1
+        if tries <= 0:
+        print("you have 0 tries left to login. Please check login code.")"""
+        print(e)
+            # break
+    print(login_valid)
     if login_valid:
         if auth is not None:
             dpg.configure_item("win_login_rh", show=False)
             dpg.configure_item("login_status", default_value="OK")
             dpg.configure_item("login_status", color=(0,255,0))
         print("login successful")
+        logged_in_rh = True
 
     return login_valid
 
@@ -171,7 +201,7 @@ def display_popup_per_indicator(indicator, parent):
         dpg.add_text(indicator)
         dpg.add_text(f"Making this indicator to only work with the interval " +
                      f"of {dpg.get_value("selected_interval")}, and " +
-                     f"a span of {dpg.get_value("selected_span")}")
+                     f"a span of {dpg.get_value('selected_span')}")
         if indicator == indicator_options[0]:       # moving average
             dpg.add_input_text(label="Period", hint="20", callback=_log, tag=f"moving_avg_period", decimal=True)
             with dpg.group(horizontal=True):
@@ -215,115 +245,90 @@ def display_popup_per_indicator(indicator, parent):
                           fit_width=True, show=False)
     dpg.configure_item(win_tag,show=True)
 
+
 # use robinhood to get historical data to display on graph
-def get_historical_rh(symbol, interval='day', span='year', bounds="regular"):
-    global amount_of_times_window_opened
-    hist = r.get_stock_historicals(symbol, interval, span, bounds)
-    hist = pd.DataFrame(hist)
-    """print(hist)
-    print(type(hist))"""
+def get_historical_stocks(symbol, interval='day', span='year'):             # bounds="regular"
+    global amount_of_times_window_opened, logged_in_rh
+    hist: pd.DataFrame
+    if logged_in_rh:
+        hist = r.get_stock_historicals(symbol, interval, span)      # bounds
+        hist = pd.DataFrame(hist)
+        if DEBUG_prog:
+            with open('Debug/debug_historical.pickle', 'wb') as file:
+                pickle.dump(hist, file)
+    else:
+        hist = yf.download(symbol, period=span, interval=interval)
+        if DEBUG_prog:
+            if os.name == 'posix':
+                with open(f'Debug/debug_{symbol}_{interval}_{span}_historical.pickle', 'wb') as file:
+                    pickle.dump(hist, file)
+            elif os.name == 'nt':
+                with open(f'Debug\\debug_{symbol}_{interval}_{span}_historical.pickle', 'wb') as file:
+                    pickle.dump(hist, file)
+        # retrieve_local_pickle("Debug/debug_historical")
+
+    print(hist)
+    # print(type(hist))
     stock_name = r.get_name_by_symbol(symbol)
     timestamp = []
-    for begin in hist["begins_at"].tolist():
-        timestamp.append(datetime.datetime.fromisoformat(begin).timestamp())
+    set_tick_timestamp = []
+
+    for n, begin in enumerate(hist["Close"].index.tolist()):          # for robinhood: hist["begins_at"].tolist()
+        # datetime_format = datetime.datetime.fromisoformat(begin).timestamp()
+        datetime_format = datetime.datetime.fromisoformat(str(begin)).strftime("%m/%d/%y")
+        set_tick_timestamp.append((datetime_format, n))
+        timestamp.append(n)
+    set_tick_timestamp = tuple(set_tick_timestamp)
 
     window_instance = amount_of_times_window_opened
-    hist_window_tag = f"{symbol}{window_instance}"
-    with dpg.window(label=stock_name, width=1000, height=400, pos=(320, 0),
+    hist_window_tag = f"{symbol}_{window_instance}"
+    with dpg.window(label=stock_name, width=(1500 * ZOOM_MULTIPLIER), height=(800 * ZOOM_MULTIPLIER), pos=(320, 0),
                     tag= hist_window_tag, on_close=lambda: dpg.delete_item(hist_window_tag)):
         amount_of_times_window_opened += 1
 
         # need to add the ability to also view pre-selected indicators as well
-        with dpg.plot(label="Candle Series", height=400, width=-1):
+        with dpg.plot(label="Candle Series", height=-1, width=-1, tag=f"candle_{hist_window_tag}"):
             dpg.add_plot_legend()
-            xaxis = dpg.add_plot_axis(dpg.mvXAxis, label=interval, scale=dpg.mvPlotScale_Time)
+            xaxis = dpg.add_plot_axis(dpg.mvXAxis, label=interval)     # scale=dpg.mvPlotScale_Time
+            """print(xaxis)
+            print(type(xaxis))
+            print(set_tick_timestamp)
+            print(type(set_tick_timestamp))"""
+            dpg.set_axis_ticks(dpg.last_item(), set_tick_timestamp)
             with dpg.plot_axis(dpg.mvYAxis, label="USD"):
-                dpg.add_candle_series(timestamp, hist["open_price"].astype(float).tolist(),
-                                      hist["close_price"].astype(float).tolist(), hist["low_price"].astype(float).tolist(),
-                                      hist["high_price"].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)
+                dpg.add_candle_series(timestamp, hist["Open"][symbol].astype(float).tolist(),
+                                      hist["Close"][symbol].astype(float).tolist(), hist["Low"][symbol].astype(float).tolist(),
+                                      hist["High"][symbol].astype(float).tolist(), label=symbol, time_unit=dpg.mvTimeUnit_Day)    # time_unit=dpg.mvTimeUnit_Day
+                ind_hist = remake_yfinace_df(hist)
                 for indicator in set_of_indicators:
-                    indicator_Y = indicator.make_indicator(hist["close_price"])
-                    dpg.add_line_series(timestamp, indicator_Y, label=indicator.name())
+                    if indicator.indicatorName not in ["MACD", "RSI"]:
+                        indicator_y = indicator.make_indicator(ind_hist)
+                        dpg.add_line_series(timestamp, indicator_y.tolist(), label=indicator.long_form_name())
                 dpg.fit_axis_data(dpg.top_container_stack())
             dpg.fit_axis_data(xaxis)
+        window_multiplier = 0
+        for indicator in set_of_indicators:
+            if indicator.indicatorName in ["MACD", "RSI"]:
+                window_multiplier += 1
+                dpg.configure_item(f"candle_{hist_window_tag}", height=((-250 * window_multiplier) * ZOOM_MULTIPLIER))
+                dpg.add_spacer(height=10)
+                with dpg.plot(label=indicator.indicatorName, height=-1, width=-1,
+                              tag=f"{indicator.indicatorName}{window_multiplier}_{hist_window_tag}"):
+                    dpg.add_plot_legend()
+                    xaxis = dpg.add_plot_axis(dpg.mvXAxis)
+                    dpg.set_axis_ticks(dpg.last_item(), set_tick_timestamp)
+                    with dpg.plot_axis(dpg.mvYAxis, label="%"):
+                        # with dpg.plot(label=indicator.indicatorName, height=250, width=-1):
+                            # indicator_y = indicator.make_indicator(ind_hist)
+                        if indicator.indicatorName == "RSI":
+                            rsi = TA.RSI(ind_hist)
+                            dpg.add_line_series(timestamp, rsi.tolist(), label="RSI")
+                            dpg.fit_axis_data(dpg.top_container_stack())
+                        elif indicator.indicatorName == "MACD":
+                            macd = TA.MACD(ind_hist)
+                            # here i was
+                    dpg.fit_axis_data(xaxis)
 
-
-# start of functions for indicators
-# made these functions a while ago before chatGpt and while I was very new to programming.
-# Except the RSI. I think you have to pass it a pandas DF if I remember right
-def make_moving_ave(close_list, period=20, simple=True):
-    sma = []
-    start = period - 1  # was 0
-    # close_ = []
-    while True:
-        if start >= len(close_list):
-            break
-        average = 0.0
-        for i in range(period):
-            num = (start - i)
-            average += close_list[num]
-        average /= period
-        sma.append(average)
-        # close_.append(close_list[start])                # for making sure that the close price aligns with the sma
-        # was if (start + period) == len(close_list): break
-        start += 1
-
-    if simple:
-        pre = [np.nan] * (period - 1)
-        sma = np.concatenate([pre, sma])
-        # temp1 = np.concatenate([pre, close_])         # for making sure that the close price aligns with the sma
-        # temp = np.array([sma, temp1, close_list])     # for making sure that the close price aligns with the sma
-        return sma
-    else:
-        ema = []
-        alpha = 0.3
-        start = period - 1
-        for i in sma:
-            a = alpha * close_list[start]
-            b = (1 - alpha) * i
-            c = a + b
-            ema.append(c)
-            if (start + 1) == len(close_list): break
-            start += 1
-        if not simple:
-            pre = [np.nan] * period
-            ema = np.concatenate([pre, ema])
-            return ema
-
-
-def make_macd(close_list: pd.DataFrame, ema1=12, ema2=26, ema_sig=9):
-    ema12 = make_moving_ave(close_list, ema1, simple=False)
-    ema26 = make_moving_ave(close_list, ema2, simple=False)
-
-    start = len(ema12) - len(ema26)
-    macd = []
-    for i in range(len(ema26)):
-        mac = ema12[i + start] - ema26[i]
-        macd.append(mac)
-
-    signal = make_moving_ave(macd, ema_sig, simple=False)
-    start = len(macd) - len(signal)
-    macd_histo = []
-    for i in range(len(signal)):
-        his = macd[i + start] - signal[i]
-        macd_histo.append(his)
-
-    return macd, signal, macd_histo
-
-
-def calculate_rsi(close_prices, period=14):
-    price_diff = close_prices.diff()
-    gain = price_diff.where(price_diff > 0, 0)
-    loss = -price_diff.where(price_diff < 0, 0)
-
-    avg_gain = gain.rolling(window=period, min_periods=1).mean()
-    avg_loss = loss.rolling(window=period, min_periods=1).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
-# end of functions for indicators
 
 # works pretty well at this moment. I like the way to login
 def show_ticker_gui():
@@ -341,6 +346,7 @@ def show_ticker_gui():
             dpg.bind_item_font(dpg.last_item(), font_bold)
             dpg.add_button(label="Login to Robinhood")
             dpg.bind_item_font(dpg.last_item(), font_bold)
+            # popup for logging in
             with dpg.popup(dpg.last_item(), modal=True, mousebutton=dpg.mvMouseButton_Left, tag="win_login_rh"):
                 dpg.add_text("Use an authenticator app to retrieve a Two Factor Authenticator code")
                 dpg.add_input_text(label="Authenticator", hint="enter text here", callback=_log, tag="MFA_input",
@@ -360,13 +366,12 @@ def show_ticker_gui():
                           tag="selected_interval", fit_width=True)
             dpg.add_combo(span_options, label="Span", default_value=span_options[4], callback=_log,
                           tag="selected_span", fit_width=True)
-            dpg.add_combo(bounds_options, label="Bounds", default_value=bounds_options[2], callback=_log,
-                          tag="selected_bounds", fit_width=True)
+            """dpg.add_combo(bounds_options, label="Bounds", default_value=bounds_options[2], callback=_log,
+                          tag="selected_bounds", fit_width=True)"""
             dpg.add_spacer(height=5)
-            dpg.add_button(label="View", callback=lambda: get_historical_rh(symbol=dpg.get_value("selected_symbol"),
-                                                                            interval=dpg.get_value("selected_interval"),
-                                                                            span=dpg.get_value("selected_span"),
-                                                                            bounds=dpg.get_value("selected_bounds")))
+            dpg.add_button(label="View", callback=lambda: get_historical_stocks(symbol=dpg.get_value("selected_symbol"),
+                                                                                interval=dpg.get_value("selected_interval"),
+                                                                                span=dpg.get_value("selected_span")))           # bounds=dpg.get_value("selected_bounds")
             dpg.add_spacer(height=10)
             # Add or delete symbols from symbol list
             dpg.add_button(label="Add/Delete Symbol", callback=_log)
@@ -400,12 +405,41 @@ def show_ticker_gui():
                        callback=lambda: delete_indicator(dpg.get_value("ind_2_del")))
 
 
+if __name__ == "__main__":
+    #   ====================
+    #        SETUP
+    #   ====================
 
-dpg.create_context()
-dpg.set_global_font_scale(1.25)
-show_ticker_gui()
-dpg.create_viewport(title='Ticker GUI', width=1200, height=1000)
-dpg.setup_dearpygui()
-dpg.show_viewport()
-dpg.start_dearpygui()
-dpg.destroy_context()
+    # pickle brothers right here
+    saved_symbols = retrieve_local_pickle("symbols")
+    set_of_indicators = retrieve_local_pickle("indicators")
+    short_list_of_indicators = [cat.long_form_name() for cat in set_of_indicators]
+
+    """interval_options = ["5minute", "10minute", "hour", "day", "week"]
+    span_options = ["day", "week", "month", "3month", "year", "5year"]          # old for Robinhood
+    bounds_options = ["extended", "trading", "regular"]"""
+
+    amount_of_times_window_opened = 0
+    logged_in_rh = False
+    DEBUG_prog = False
+
+
+    #   ====================
+    #       END SETUP
+    #   ====================
+    #       ACTION
+    #   ====================
+
+
+    dpg.create_context()
+    dpg.set_global_font_scale(1.25)
+    show_ticker_gui()
+    dpg.create_viewport(title='Ticker GUI', width=(2000 * ZOOM_MULTIPLIER), height=(1500 * ZOOM_MULTIPLIER))
+    dpg.setup_dearpygui()
+    dpg.show_viewport()
+    dpg.start_dearpygui()
+    dpg.destroy_context()
+
+    #   ====================
+    #       END ACTION
+    #   ====================
